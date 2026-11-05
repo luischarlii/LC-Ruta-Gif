@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ruta a GIF</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--ink:#12263a;--paper:#f6f7f4;--line:#d5dad4;--route:#d6246e;--go:#1f9d55;--card:#fff}
+@media (prefers-color-scheme:dark){:root{--ink:#e8eef4;--paper:#0f1b27;--line:#2a3b4c;--card:#16273a}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--paper);color:var(--ink);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0)}
+#panel{padding:10px;display:grid;gap:8px;background:var(--card);border-bottom:1px solid var(--line)}
+.row{display:flex;gap:8px}
+input,select,button{font:inherit;color:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);min-width:0}
+input{flex:1}
+button{background:var(--route);color:#fff;border:0;font-weight:600;cursor:pointer}
+button.sec{background:var(--ink);color:var(--paper)}
+button:disabled{opacity:.5}
+#map{flex:1;min-height:240px}
+#info{max-height:34vh;overflow:auto;padding:10px;background:var(--card);border-top:1px solid var(--line);padding-bottom:calc(10px + env(safe-area-inset-bottom,0))}
+#sum{font-weight:700;margin-bottom:6px}
+ol{margin:0;padding-left:22px}
+li{padding:3px 0}
+#msg{font-size:14px;opacity:.8}
+#out img{max-width:100%;border-radius:8px;margin-top:8px}
+</style>
+</head>
+<body>
+<div id="panel">
+  <div class="row"><input id="orig" placeholder="Desde: vacío = mi ubicación (GPS)"></div>
+  <div class="row"><input id="dest" placeholder="Hasta: busca un lugar o dirección"><select id="mode"><option value="car">Auto</option><option value="foot">A pie</option><option value="bike">Bici</option></select></div>
+  <div class="row"><button id="go" style="flex:1">Calcular ruta</button><button id="gif" class="sec" style="flex:1" disabled>Crear GIF</button></div>
+  <div id="msg"></div>
+</div>
+<div id="map"></div>
+<div id="info"><div id="sum">Escribe un destino y calcula la ruta.</div><ol id="steps"></ol><div id="out"></div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const map=L.map('map').setView([19.43,-99.13],12);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+let layer=L.layerGroup().addTo(map), route=null;
+const say=t=>$('msg').textContent=t;
+
+const SVC={car:'https://router.project-osrm.org/route/v1/driving/',
+ foot:'https://routing.openstreetmap.de/routed-foot/route/v1/foot/',
+ bike:'https://routing.openstreetmap.de/routed-bike/route/v1/bike/'};
+
+async function geocode(q){
+  const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q));
+  const j=await r.json();
+  if(!j.length) throw new Error('No encontré "'+q+'".');
+  return {lat:+j[0].lat,lon:+j[0].lon,name:j[0].display_name};
+}
+function gps(){
+  return new Promise((ok,no)=>navigator.geolocation
+    ? navigator.geolocation.getCurrentPosition(p=>ok({lat:p.coords.latitude,lon:p.coords.longitude}),()=>no(new Error('No pude obtener tu ubicación. Escribe un origen.')),{enableHighAccuracy:true,timeout:15000})
+    : no(new Error('Este navegador no tiene GPS. Escribe un origen.')));
+}
+const MOD={left:'a la izquierda',right:'a la derecha','slight left':'ligeramente a la izquierda','slight right':'ligeramente a la derecha','sharp left':'cerrado a la izquierda','sharp right':'cerrado a la derecha',straight:'recto',uturn:'en U'};
+function fmt(m){return m>=1000?(m/1000).toFixed(1)+' km':Math.round(m)+' m'}
+function text(s){
+  const t=s.maneuver.type,m=MOD[s.maneuver.modifier]||'',n=s.name?' en '+s.name:'';
+  let v=t==='depart'?'Sal':t==='arrive'?'Llegaste a tu destino':t==='roundabout'||t==='rotary'?'Entra a la glorieta y sal':t==='turn'||t==='end of road'?'Gira':'Continúa';
+  if(t==='arrive') return v;
+  return v+(m?' '+m:'')+n+' ('+fmt(s.distance)+')';
+}
+
+$('go').onclick=async()=>{
+  try{
+    $('go').disabled=true;$('gif').disabled=true;$('out').innerHTML='';
+    if(!$('dest').value.trim()) throw new Error('Escribe un destino.');
+    say('Buscando lugares…');
+    const o=$('orig').value.trim()?await geocode($('orig').value.trim()):await gps();
+    const d=await geocode($('dest').value.trim());
+    say('Calculando ruta…');
+    const url=SVC[$('mode').value]+o.lon+','+o.lat+';'+d.lon+','+d.lat+'?overview=full&geometries=geojson&steps=true';
+    const j=await (await fetch(url)).json();
+    if(!j.routes||!j.routes.length) throw new Error('No hay ruta entre esos puntos.');
+    const r=j.routes[0];
+    route={pts:r.geometry.coordinates.map(c=>[c[1],c[0]]),o,d};
+    layer.clearLayers();
+    const line=L.polyline(route.pts,{color:'#d6246e',weight:5}).addTo(layer);
+    L.circleMarker([o.lat,o.lon],{radius:8,color:'#fff',fillColor:'#1f9d55',fillOpacity:1,weight:2}).addTo(layer);
+    L.circleMarker([d.lat,d.lon],{radius:8,color:'#fff',fillColor:'#d6246e',fillOpacity:1,weight:2}).addTo(layer);
+    map.fitBounds(line.getBounds(),{padding:[30,30]});
+    $('sum').textContent=fmt(r.distance)+' · '+Math.max(1,Math.round(r.duration/60))+' min';
+    $('steps').innerHTML='';
+    r.legs.forEach(l=>l.steps.forEach(s=>{const li=document.createElement('li');li.textContent=text(s);$('steps').appendChild(li)}));
+    say('Ruta lista.');$('gif').disabled=false;
+  }catch(e){say(e.message||'Error de conexión.')}
+  $('go').disabled=false;
+};
+
+/* ---- GIF ---- */
+const W=480,H=360,T=256;
+const mx=(lon,z)=>(lon+180)/360*T*2**z;
+const my=(lat,z)=>{const r=lat*Math.PI/180;return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*T*2**z};
+function loadImg(src){return new Promise(ok=>{const i=new Image();i.crossOrigin='anonymous';i.onload=()=>ok(i);i.onerror=()=>ok(null);i.src=src})}
+
+$('gif').onclick=async()=>{
+  if(!route) return;
+  $('gif').disabled=true;$('out').innerHTML='';
+  try{
+    say('Dibujando mapa…');
+    const lats=route.pts.map(p=>p[0]),lons=route.pts.map(p=>p[1]);
+    const minLa=Math.min(...lats),maxLa=Math.max(...lats),minLo=Math.min(...lons),maxLo=Math.max(...lons);
+    let z=17;
+    while(z>2&&(mx(maxLo,z)-mx(minLo,z)>W-80||my(minLa,z)-my(maxLa,z)>H-80)) z--;
+    const cx=(mx(minLo,z)+mx(maxLo,z))/2,cy=(my(minLa,z)+my(maxLa,z))/2;
+    const ox=cx-W/2,oy=cy-H/2;
+    const base=document.createElement('canvas');base.width=W;base.height=H;
+    const bc=base.getContext('2d');bc.fillStyle='#e8e8e0';bc.fillRect(0,0,W,H);
+    const jobs=[];
+    for(let x=Math.floor(ox/T);x<=Math.floor((ox+W)/T);x++)
+      for(let y=Math.floor(oy/T);y<=Math.floor((oy+H)/T);y++)
+        jobs.push(loadImg('https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png').then(i=>i&&bc.drawImage(i,x*T-ox,y*T-oy)));
+    await Promise.all(jobs);
+    bc.fillStyle='rgba(255,255,255,.8)';bc.fillRect(W-130,H-18,130,18);
+    bc.fillStyle='#333';bc.font='11px sans-serif';bc.fillText('© OpenStreetMap',W-124,H-5);
+
+    const P=route.pts.map(p=>[mx(p[1],z)-ox,my(p[0],z)-oy]);
+    const dot=(p,c)=>{bc.beginPath();bc.arc(p[0],p[1],8,0,7);bc.fillStyle=c;bc.fill();bc.lineWidth=3;bc.strokeStyle='#fff';bc.stroke()};
+    const N=36,gif=new GIF({workers:2,quality:10,width:W,height:H,workerScript:URL.createObjectURL(await (await fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js')).blob())});
+    const c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d');
+    for(let f=1;f<=N;f++){
+      g.drawImage(base,0,0);
+      const n=Math.max(2,Math.round(P.length*f/N));
+      g.lineJoin=g.lineCap='round';g.lineWidth=5;g.strokeStyle='#d6246e';
+      g.beginPath();P.slice(0,n).forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));g.stroke();
+      const dp=(p,col)=>{g.beginPath();g.arc(p[0],p[1],8,0,7);g.fillStyle=col;g.fill();g.lineWidth=3;g.strokeStyle='#fff';g.stroke()};
+      dp(P[0],'#1f9d55');dp(P[n-1],f===N?'#d6246e':'#12263a');
+      gif.addFrame(g.getImageData(0,0,W,H),{delay:f===N?1800:90});
+    }
+    say('Generando GIF…');
+    gif.on('finished',b=>{
+      const u=URL.createObjectURL(b);
+      $('out').innerHTML='<img src="'+u+'" alt="Ruta animada"><br><a download="ruta.gif" href="'+u+'"><button type="button" style="margin-top:8px">Descargar GIF</button></a>';
+      say('GIF listo.');$('gif').disabled=false;
+    });
+    gif.render();
+  }catch(e){say('No se pudo crear el GIF: '+(e.message||'error'));$('gif').disabled=false}
+};
+</script>
+</body>
+</html>
