@@ -196,11 +196,24 @@ function place(k,p){
     mk[k].on('dragend',()=>{const q=mk[k].getLatLng();pick(k,q.lat,q.lng)})}
   $('bO').textContent='Desde'+(O?' ✓':'');$('bD').textContent='Hasta'+(D?' ✓':'');
 }
-const desc=()=>'Desde: '+(O?(O.name||'punto fijado'):'—')+'  →  Hasta: '+(D?(D.name||'punto fijado'):'—');
+const label=p=>p?(p.name==='Mi ubicación'&&p.short?'Mi ubicación · '+p.short:(p.name||'punto fijado')):'—';
+const desc=()=>'Desde: '+label(O)+'  →  Hasta: '+label(D);
+function shortName(j){
+  const a=j.address||{};
+  const r=a.road||a.pedestrian||a.footway||a.cycleway||a.path||a.residential||a.neighbourhood||a.suburb||a.hamlet||a.village||a.town||a.city||(j.display_name||'').split(',')[0];
+  return r+(a.road&&a.house_number?' '+a.house_number:'');
+}
+function nameFor(k,p){
+  return fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&addressdetails=1&accept-language=es&lat='+p.lat+'&lon='+p.lon)
+    .then(r=>r.json()).then(j=>{
+      if(!j||!j.display_name)return;
+      p.short=shortName(j);if(!p.name)p.name=p.short;
+      if((k==='o'?O:D)===p)say(desc());
+    }).catch(()=>{});
+}
 function pick(k,lat,lon){
   const p={lat,lon};place(k,p);say(desc());
-  fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat='+lat+'&lon='+lon).then(r=>r.json()).then(j=>{
-    if(j.display_name){p.name=j.display_name.split(',').slice(0,2).join(',');if((k==='o'?O:D)===p)say(desc())}}).catch(()=>{});
+  nameFor(k,p);
   if(k==='o')setTap('d');
   if(O&&D)calc();
 }
@@ -209,7 +222,7 @@ $('bO').onclick=()=>setTap('o');
 $('bD').onclick=()=>setTap('d');
 $('mode').onchange=()=>{if(O&&D)calc()};
 $('loc').onclick=async()=>{
-  try{say('Pidiendo tu ubicación…');const q=await gps();place('o',{lat:q.lat,lon:q.lon,name:'Mi ubicación'});
+  try{say('Pidiendo tu ubicación…');const q=await gps();const g0={lat:q.lat,lon:q.lon,name:'Mi ubicación'};place('o',g0);nameFor('o',g0);
     map.setView([q.lat,q.lon],15);setTap('d');say(desc());if(D)calc()}
   catch(e){say(e.message)}
 };
@@ -220,7 +233,7 @@ async function calc(){
     $('go').disabled=true;$('gif').disabled=true;$('out').innerHTML='';
     if(!D) throw new Error('Pulsa Hasta y toca el mapa para fijar el destino.');
     say('Calculando ruta…');
-    let o=O;if(!o){const q=await gps();o={lat:q.lat,lon:q.lon,name:'Mi ubicación'};place('o',o)}
+    let o=O;if(!o){const q=await gps();o={lat:q.lat,lon:q.lon,name:'Mi ubicación'};place('o',o);nameFor('o',o)}
     const d=D;
     const url=SVC[$('mode').value]+o.lon+','+o.lat+';'+d.lon+','+d.lat+'?overview=full&geometries=geojson&steps=true';
     const j=await (await fetch(url)).json();
@@ -325,6 +338,8 @@ function quant(d,pal,cache){
 }
 const tick=()=>new Promise(r=>setTimeout(r,0));
 
+const lab=p=>p.short||p.name||(p.lat.toFixed(4)+', '+p.lon.toFixed(4));
+function fitTxt(x,t,w){if(x.measureText(t).width<=w)return t;while(t.length>1&&x.measureText(t+'…').width>w)t=t.slice(0,-1);return t+'…'}
 const rr=(x,a,b,w,h,r)=>{x.beginPath();x.moveTo(a+r,b);x.arcTo(a+w,b,a+w,b+h,r);x.arcTo(a+w,b+h,a,b+h,r);x.arcTo(a,b+h,a,b,r);x.arcTo(a,b,a+w,b,r);x.closePath()};
 const fmtT=s=>{const m=Math.max(1,Math.round(s/60));return m>=60?Math.floor(m/60)+' h '+(m%60)+' min':m+' min'};
 const TXT={car:'En auto',foot:'A pie',bike:'En bici'};
@@ -338,7 +353,7 @@ $('gif').onclick=async()=>{
     const lats=route.pts.map(p=>p[0]),lons=route.pts.map(p=>p[1]);
     const minLa=Math.min(...lats),maxLa=Math.max(...lats),minLo=Math.min(...lons),maxLo=Math.max(...lons);
     let z=17;
-    while(z>2&&(mx(maxLo,z)-mx(minLo,z)>W-80||my(minLa,z)-my(maxLa,z)>H-80)) z--;
+    while(z>2&&(mx(maxLo,z)-mx(minLo,z)>W-80||my(minLa,z)-my(maxLa,z)>H-110)) z--;
     const cx=(mx(minLo,z)+mx(maxLo,z))/2,cy=(my(minLa,z)+my(maxLa,z))/2;
     const ox=cx-W/2,oy=cy-H/2;
     const jobs=[];
@@ -354,6 +369,14 @@ $('gif').onclick=async()=>{
       if(logo){x.save();x.globalAlpha=.07;x.drawImage(logo,(W-H)/2,0,H,H);x.restore()}
       x.fillStyle='rgba(255,255,255,.8)';x.fillRect(W-130,H-18,130,18);
       x.fillStyle='#333';x.font='11px sans-serif';x.fillText('© OpenStreetMap',W-124,H-5);
+      x.fillStyle='#12263a';x.fillRect(0,0,W,38);
+      const row=(y,col,tag,p)=>{
+        x.fillStyle=col;x.beginPath();x.arc(14,y-4,5,0,7);x.fill();
+        x.font='bold 13px sans-serif';x.fillStyle='#f5b400';x.fillText(tag,26,y);
+        const tw=x.measureText(tag).width;
+        x.fillStyle='#fff';x.fillText(fitTxt(x,lab(p),W-26-tw-12),26+tw,y);
+      };
+      row(15,'#1f9d55','Desde: ',route.o);row(32,'#d6246e','Hasta: ',route.d);
       x.fillStyle='#12263a';x.fillRect(0,H,W,FH);
       if(logo){x.save();rr(x,8,ly,LS,LS,10);x.clip();x.drawImage(logo,8,ly,LS,LS);x.restore();
         x.lineWidth=2;x.strokeStyle='#f5b400';rr(x,8,ly,LS,LS,10);x.stroke()}
