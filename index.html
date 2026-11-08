@@ -139,6 +139,7 @@ li{padding:3px 0}
 </style>
 </head>
 <body>
+<script src="https://luischarlii.github.io/LC-Ads/lc-ads.js?v=2" data-app="all"></script>
 <div id="bar">
   <img id="logo" alt="LC Ruta GIF">
   <select id="pais"><option value="mx">México</option><option value="us">Estados Unidos</option><option value="ca">Canadá</option></select>
@@ -488,12 +489,17 @@ $('info').addEventListener('scroll',updHint);
 $('info').addEventListener('load',updHint,true);
 addEventListener('resize',updHint);
 new MutationObserver(updHint).observe($('info'),{childList:true,subtree:true,characterData:true});
+function runIntegrityGuard(){
+  const adsOk=!!document.querySelector('script[src="https://luischarlii.github.io/LC-Ads/lc-ads.js?v=2"]');
+  const donaOk=['lcDonateBtn','lcDonationDetails','lcClabe','Mercado Pago','LC Radio Universal'].every(k=>DONA_HTML.includes(k));
+  const clabeOk=initDona.toString().includes('NzIyOTY5MDEwMDYxNDczNTgw');
+  if(adsOk&&donaOk&&clabeOk)return;
+  const fail=()=>say('No se pudo completar la operación: faltan archivos o recursos del proyecto. Revisa que copiaste todos los archivos e intenta de nuevo.');
+  $('go').onclick=fail;$('gif').onclick=fail;
+}
+runIntegrityGuard();
 $('logo').src=LOGO;
 ['icon','apple-touch-icon'].forEach(r=>{const l=document.createElement('link');l.rel=r;l.href=LOGO;document.head.appendChild(l)});
-</script>
-  <script
-  src="https://luischarlii.github.io/LC-Ads/lc-ads.js?v=2"
-  data-app="all">
 </script>
 </body>
 </html>
