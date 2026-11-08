@@ -29,6 +29,8 @@ li{padding:3px 0}
 </head>
 <body>
 <div id="panel">
+  <div class="row"><select id="pais"><option value="mx">México</option><option value="us">Estados Unidos</option><option value="ca">Canadá</option></select><select id="edo" style="flex:1"></select></div>
+  <div class="row"><input id="ciudad" list="sug" placeholder="Ciudad: escribe y elige (abre el mapa ahí)"><datalist id="sug"></datalist></div>
   <div class="row"><input id="orig" placeholder="Desde: escribe, toca el mapa o usa GPS"><button id="loc" class="sec" title="Usar mi ubicación">📍</button></div>
   <div class="row"><input id="dest" placeholder="Hasta: busca un lugar o dirección"><select id="mode"><option value="car">Auto</option><option value="foot">A pie</option><option value="bike">Bici</option></select></div>
   <div class="row"><select id="tap" style="flex:1"><option value="o">Al tocar el mapa fijo: origen</option><option value="d" selected>Al tocar el mapa fijo: destino</option></select></div>
@@ -51,7 +53,8 @@ const SVC={car:'https://router.project-osrm.org/route/v1/driving/',
  bike:'https://routing.openstreetmap.de/routed-bike/route/v1/bike/'};
 
 async function geocode(q){
-  const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q));
+  const b=map.getBounds(),vb=[b.getWest(),b.getNorth(),b.getEast(),b.getSouth()].join(',');
+  const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&viewbox='+vb+'&q='+encodeURIComponent(q));
   const j=await r.json();
   if(!j.length) throw new Error('No encontré "'+q+'".');
   return {lat:+j[0].lat,lon:+j[0].lon,name:j[0].display_name};
@@ -103,6 +106,42 @@ async function locate(k){
 }
 $('orig').onkeydown=e=>{if(e.key==='Enter')locate('o')};
 $('dest').onkeydown=e=>{if(e.key==='Enter')locate('d')};
+
+/* ---- País / estado / ciudad ---- */
+const EST={
+mx:['Aguascalientes','Baja California','Baja California Sur','Campeche','Chiapas','Chihuahua','Ciudad de México','Coahuila','Colima','Durango','Guanajuato','Guerrero','Hidalgo','Jalisco','Estado de México','Michoacán','Morelos','Nayarit','Nuevo León','Oaxaca','Puebla','Querétaro','Quintana Roo','San Luis Potosí','Sinaloa','Sonora','Tabasco','Tamaulipas','Tlaxcala','Veracruz','Yucatán','Zacatecas'],
+us:['Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut','Delaware','District of Columbia','Florida','Georgia','Hawaii','Idaho','Illinois','Indiana','Iowa','Kansas','Kentucky','Louisiana','Maine','Maryland','Massachusetts','Michigan','Minnesota','Mississippi','Missouri','Montana','Nebraska','Nevada','New Hampshire','New Jersey','New Mexico','New York','North Carolina','North Dakota','Ohio','Oklahoma','Oregon','Pennsylvania','Rhode Island','South Carolina','South Dakota','Tennessee','Texas','Utah','Vermont','Virginia','Washington','West Virginia','Wisconsin','Wyoming'],
+ca:['Alberta','British Columbia','Manitoba','New Brunswick','Newfoundland and Labrador','Nova Scotia','Ontario','Prince Edward Island','Quebec','Saskatchewan','Northwest Territories','Nunavut','Yukon']};
+const PN={mx:'México',us:'United States',ca:'Canada'};
+async function fly(q,maxZ){
+  try{
+    say('Buscando…');
+    const j=await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes='+$('pais').value+'&q='+encodeURIComponent(q))).json();
+    if(!j.length) throw new Error('No encontré "'+q+'".');
+    const b=j[0].boundingbox.map(Number);
+    map.fitBounds([[b[0],b[2]],[b[1],b[3]]],{maxZoom:maxZ,padding:[20,20]});
+    say('Mapa listo. Fija origen y destino.');
+  }catch(e){say(e.message||'Error de conexión.')}
+}
+function fillEdo(){
+  $('edo').innerHTML='<option value="">Estado / provincia</option>'+EST[$('pais').value].map(e=>'<option>'+e+'</option>').join('');
+  $('ciudad').value='';$('sug').innerHTML='';
+}
+$('pais').onchange=()=>{fillEdo();fly(PN[$('pais').value],5)};
+$('edo').onchange=()=>{$('ciudad').value='';$('sug').innerHTML='';if($('edo').value)fly($('edo').value+', '+PN[$('pais').value],9)};
+$('ciudad').onchange=()=>{const c=$('ciudad').value.trim();if(c)fly(c+', '+$('edo').value+', '+PN[$('pais').value],14)};
+let tm;
+$('ciudad').oninput=()=>{
+  clearTimeout(tm);const v=$('ciudad').value.trim();if(v.length<3)return;
+  tm=setTimeout(async()=>{
+    try{
+      const q=v+($('edo').value?', '+$('edo').value:'');
+      const j=await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=6&countrycodes='+$('pais').value+'&q='+encodeURIComponent(q))).json();
+      $('sug').innerHTML=[...new Set(j.map(x=>x.display_name.split(',')[0]))].map(n=>'<option value="'+n.replace(/[&<>"]/g,'')+'">').join('');
+    }catch(e){}
+  },600);
+};
+fillEdo();
 async function calc(){
   try{
     $('go').disabled=true;$('gif').disabled=true;$('out').innerHTML='';
