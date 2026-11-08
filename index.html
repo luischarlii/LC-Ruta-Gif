@@ -29,16 +29,16 @@ li{padding:3px 0}
 </head>
 <body>
 <div id="panel">
-  <div class="row"><input id="orig" placeholder="Desde: vacío = mi ubicación (GPS)"></div>
+  <div class="row"><input id="orig" placeholder="Desde: escribe, toca el mapa o usa GPS"><button id="loc" class="sec" title="Usar mi ubicación">📍</button></div>
   <div class="row"><input id="dest" placeholder="Hasta: busca un lugar o dirección"><select id="mode"><option value="car">Auto</option><option value="foot">A pie</option><option value="bike">Bici</option></select></div>
+  <div class="row"><select id="tap" style="flex:1"><option value="o">Al tocar el mapa fijo: origen</option><option value="d" selected>Al tocar el mapa fijo: destino</option></select></div>
   <div class="row"><button id="go" style="flex:1">Calcular ruta</button><button id="gif" class="sec" style="flex:1" disabled>Crear GIF</button></div>
   <div id="msg"></div>
 </div>
 <div id="map"></div>
-<div id="info"><div id="sum">Escribe un destino y calcula la ruta.</div><ol id="steps"></ol><div id="out"></div></div>
+<div id="info"><div id="sum">Toca el mapa para fijar origen y destino, o escribe un lugar.</div><ol id="steps"></ol><div id="out"></div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const map=L.map('map').setView([19.43,-99.13],12);
@@ -58,7 +58,7 @@ async function geocode(q){
 }
 function gps(){
   return new Promise((ok,no)=>navigator.geolocation
-    ? navigator.geolocation.getCurrentPosition(p=>ok({lat:p.coords.latitude,lon:p.coords.longitude}),()=>no(new Error('No pude obtener tu ubicación. Escribe un origen.')),{enableHighAccuracy:true,timeout:15000})
+    ? navigator.geolocation.getCurrentPosition(p=>ok({lat:p.coords.latitude,lon:p.coords.longitude}),()=>no(new Error('No pude obtener tu ubicación. Permite la ubicación en el navegador (necesita https o abrirlo en un navegador) o toca el mapa para fijar el origen.')),{enableHighAccuracy:true,timeout:15000})
     : no(new Error('Este navegador no tiene GPS. Escribe un origen.')));
 }
 const MOD={left:'a la izquierda',right:'a la derecha','slight left':'ligeramente a la izquierda','slight right':'ligeramente a la derecha','sharp left':'cerrado a la izquierda','sharp right':'cerrado a la derecha',straight:'recto',uturn:'en U'};
@@ -70,13 +70,46 @@ function text(s){
   return v+(m?' '+m:'')+n+' ('+fmt(s.distance)+')';
 }
 
-$('go').onclick=async()=>{
+let O=null,D=null;const pins=L.layerGroup().addTo(map),mk={};
+const icon=c=>L.divIcon({className:'',html:'<div style="width:18px;height:18px;border-radius:50%;background:'+c+';border:3px solid #fff;box-shadow:0 0 4px #0008"></div>',iconSize:[18,18],iconAnchor:[9,9]});
+function place(k,p,label){
+  if(k==='o')O=p;else D=p;
+  if(mk[k])mk[k].setLatLng([p.lat,p.lon]);
+  else{mk[k]=L.marker([p.lat,p.lon],{icon:icon(k==='o'?'#1f9d55':'#d6246e'),draggable:true}).addTo(pins);
+    mk[k].on('dragend',()=>{const q=mk[k].getLatLng();pick(k,q.lat,q.lng)})}
+  $(k==='o'?'orig':'dest').value=label||(p.lat.toFixed(5)+', '+p.lon.toFixed(5));
+}
+function pick(k,lat,lon){
+  const p={lat,lon};place(k,p);
+  fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat='+lat+'&lon='+lon).then(r=>r.json()).then(j=>{
+    if(j.display_name&&(k==='o'?O:D)===p)$(k==='o'?'orig':'dest').value=j.display_name}).catch(()=>{});
+  if(k==='o')$('tap').value='d';
+  if(O&&D)calc();else say(k==='o'?'Origen fijado. Toca el destino.':'Destino fijado. Falta el origen: toca el mapa o usa 📍.');
+}
+map.on('click',e=>pick($('tap').value,e.latlng.lat,e.latlng.lng));
+$('orig').oninput=()=>{O=null};$('dest').oninput=()=>{D=null};
+$('loc').onclick=async()=>{
+  try{say('Pidiendo tu ubicación…');const p=await gps();place('o',p,'Mi ubicación');map.setView([p.lat,p.lon],15);$('tap').value='d';
+    say('Origen fijado. Toca el mapa o escribe el destino.');if(D)calc()}
+  catch(e){say(e.message)}
+};
+$('go').onclick=calc;
+async function locate(k){
+  const t=$(k==='o'?'orig':'dest').value.trim();if(!t)return;
+  try{say('Buscando…');const p=await geocode(t);place(k,p,t);map.setView([p.lat,p.lon],15);
+    if(k==='o')$('tap').value='d';
+    if(O&&D)calc();else say('Lugar fijado en el mapa.')}
+  catch(e){say(e.message)}
+}
+$('orig').onkeydown=e=>{if(e.key==='Enter')locate('o')};
+$('dest').onkeydown=e=>{if(e.key==='Enter')locate('d')};
+async function calc(){
   try{
     $('go').disabled=true;$('gif').disabled=true;$('out').innerHTML='';
-    if(!$('dest').value.trim()) throw new Error('Escribe un destino.');
+    if(!D&&!$('dest').value.trim()) throw new Error('Fija un destino: escríbelo o toca el mapa.');
     say('Buscando lugares…');
-    const o=$('orig').value.trim()?await geocode($('orig').value.trim()):await gps();
-    const d=await geocode($('dest').value.trim());
+    let o=O;if(!o){const t=$('orig').value.trim();o=t?await geocode(t):await gps();place('o',o,t||'Mi ubicación')}
+    let d=D;if(!d){const t=$('dest').value.trim();d=await geocode(t);place('d',d,t)}
     say('Calculando ruta…');
     const url=SVC[$('mode').value]+o.lon+','+o.lat+';'+d.lon+','+d.lat+'?overview=full&geometries=geojson&steps=true';
     const j=await (await fetch(url)).json();
@@ -85,8 +118,6 @@ $('go').onclick=async()=>{
     route={pts:r.geometry.coordinates.map(c=>[c[1],c[0]]),o,d};
     layer.clearLayers();
     const line=L.polyline(route.pts,{color:'#d6246e',weight:5}).addTo(layer);
-    L.circleMarker([o.lat,o.lon],{radius:8,color:'#fff',fillColor:'#1f9d55',fillOpacity:1,weight:2}).addTo(layer);
-    L.circleMarker([d.lat,d.lon],{radius:8,color:'#fff',fillColor:'#d6246e',fillOpacity:1,weight:2}).addTo(layer);
     map.fitBounds(line.getBounds(),{padding:[30,30]});
     $('sum').textContent=fmt(r.distance)+' · '+Math.max(1,Math.round(r.duration/60))+' min';
     $('steps').innerHTML='';
@@ -96,54 +127,118 @@ $('go').onclick=async()=>{
   $('go').disabled=false;
 };
 
-/* ---- GIF ---- */
+/* ---- GIF (codificador propio, sin librerías ni workers) ---- */
 const W=480,H=360,T=256;
 const mx=(lon,z)=>(lon+180)/360*T*2**z;
 const my=(lat,z)=>{const r=lat*Math.PI/180;return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*T*2**z};
 function loadImg(src){return new Promise(ok=>{const i=new Image();i.crossOrigin='anonymous';i.onload=()=>ok(i);i.onerror=()=>ok(null);i.src=src})}
 
+function lzw(ix){
+  const out=[];let cur=0,sh=0;
+  const emit=(c,n)=>{cur|=c<<sh;sh+=n;while(sh>=8){out.push(cur&255);cur>>=8;sh-=8}};
+  const CLR=256,EOI=257;let size=9,next=258,tab=new Map();
+  emit(CLR,size);
+  let ib=ix[0];
+  for(let i=1;i<ix.length;i++){
+    const k=ix[i],key=ib<<8|k,c=tab.get(key);
+    if(c===undefined){
+      emit(ib,size);
+      if(next===4096){emit(CLR,size);next=258;size=9;tab=new Map()}
+      else{if(next>=(1<<size))size++;tab.set(key,next++)}
+      ib=k;
+    }else ib=c;
+  }
+  emit(ib,size);emit(EOI,size);
+  if(sh>0)out.push(cur&255);
+  return out;
+}
+function encodeGif(frames,pal,delays,w,h){
+  const o=[],u16=n=>o.push(n&255,(n>>8)&255),str=s=>{for(const c of s)o.push(c.charCodeAt(0))};
+  str('GIF89a');u16(w);u16(h);o.push(0xF7,0,0);
+  for(let i=0;i<768;i++)o.push(pal[i]);
+  o.push(0x21,0xFF,0x0B);str('NETSCAPE2.0');o.push(3,1,0,0,0);
+  frames.forEach((ix,fi)=>{
+    o.push(0x21,0xF9,4,0);u16(delays[fi]);o.push(0,0);
+    o.push(0x2C);u16(0);u16(0);u16(w);u16(h);o.push(0,8);
+    const d=lzw(ix);
+    for(let i=0;i<d.length;i+=255){const n=Math.min(255,d.length-i);o.push(n);for(let j=0;j<n;j++)o.push(d[i+j])}
+    o.push(0);
+  });
+  o.push(0x3B);
+  return new Uint8Array(o);
+}
+function buildPal(img){
+  const h=new Map();
+  for(let i=0;i<img.length;i+=4){const k=((img[i]>>3)<<10)|((img[i+1]>>3)<<5)|(img[i+2]>>3);h.set(k,(h.get(k)||0)+1)}
+  const pal=[...h.entries()].sort((a,b)=>b[1]-a[1]).slice(0,248).map(e=>{const k=e[0];return [((k>>10)&31)*8+4,((k>>5)&31)*8+4,(k&31)*8+4]});
+  [[214,36,110],[31,157,85],[18,38,58],[255,255,255]].forEach(c=>pal.push(c));
+  while(pal.length<256)pal.push([0,0,0]);
+  return pal;
+}
+function quant(d,pal,cache){
+  const n=d.length/4,ix=new Uint8Array(n);
+  for(let i=0,p=0;i<n;i++,p+=4){
+    const r=d[p],g=d[p+1],b=d[p+2],k=((r>>3)<<10)|((g>>3)<<5)|(b>>3);
+    let c=cache[k];
+    if(c<0){let best=1e9;c=0;
+      for(let j=0;j<pal.length;j++){const q=pal[j],e=(q[0]-r)**2+(q[1]-g)**2+(q[2]-b)**2;if(e<best){best=e;c=j}}
+      cache[k]=c}
+    ix[i]=c;
+  }
+  return ix;
+}
+const tick=()=>new Promise(r=>setTimeout(r,0));
+
 $('gif').onclick=async()=>{
   if(!route) return;
   $('gif').disabled=true;$('out').innerHTML='';
   try{
-    say('Dibujando mapa…');
+    say('Descargando mapa…');
     const lats=route.pts.map(p=>p[0]),lons=route.pts.map(p=>p[1]);
     const minLa=Math.min(...lats),maxLa=Math.max(...lats),minLo=Math.min(...lons),maxLo=Math.max(...lons);
     let z=17;
     while(z>2&&(mx(maxLo,z)-mx(minLo,z)>W-80||my(minLa,z)-my(maxLa,z)>H-80)) z--;
     const cx=(mx(minLo,z)+mx(maxLo,z))/2,cy=(my(minLa,z)+my(maxLa,z))/2;
     const ox=cx-W/2,oy=cy-H/2;
-    const base=document.createElement('canvas');base.width=W;base.height=H;
-    const bc=base.getContext('2d');bc.fillStyle='#e8e8e0';bc.fillRect(0,0,W,H);
     const jobs=[];
     for(let x=Math.floor(ox/T);x<=Math.floor((ox+W)/T);x++)
       for(let y=Math.floor(oy/T);y<=Math.floor((oy+H)/T);y++)
-        jobs.push(loadImg('https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png').then(i=>i&&bc.drawImage(i,x*T-ox,y*T-oy)));
-    await Promise.all(jobs);
-    bc.fillStyle='rgba(255,255,255,.8)';bc.fillRect(W-130,H-18,130,18);
-    bc.fillStyle='#333';bc.font='11px sans-serif';bc.fillText('© OpenStreetMap',W-124,H-5);
+        jobs.push(loadImg('https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png').then(i=>({i,x,y})));
+    const tiles=await Promise.all(jobs);
+    const paint=t=>{
+      const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+      x.fillStyle='#e8e8e0';x.fillRect(0,0,W,H);
+      if(t)tiles.forEach(e=>e.i&&x.drawImage(e.i,e.x*T-ox,e.y*T-oy));
+      x.fillStyle='rgba(255,255,255,.8)';x.fillRect(W-130,H-18,130,18);
+      x.fillStyle='#333';x.font='11px sans-serif';x.fillText('© OpenStreetMap',W-124,H-5);
+      return c;
+    };
+    let base=paint(true),note='';
+    try{base.getContext('2d').getImageData(0,0,1,1)}
+    catch(e){base=paint(false);note=' (sin fondo de mapa: el navegador bloqueó los mosaicos)'}
+    const pal=buildPal(base.getContext('2d').getImageData(0,0,W,H).data);
+    const cache=new Int16Array(32768).fill(-1);
 
     const P=route.pts.map(p=>[mx(p[1],z)-ox,my(p[0],z)-oy]);
-    const dot=(p,c)=>{bc.beginPath();bc.arc(p[0],p[1],8,0,7);bc.fillStyle=c;bc.fill();bc.lineWidth=3;bc.strokeStyle='#fff';bc.stroke()};
-    const N=36,gif=new GIF({workers:2,quality:10,width:W,height:H,workerScript:URL.createObjectURL(await (await fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js')).blob())});
+    const N=36,frames=[],delays=[];
     const c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d');
+    const dp=(p,col)=>{g.beginPath();g.arc(p[0],p[1],8,0,7);g.fillStyle=col;g.fill();g.lineWidth=3;g.strokeStyle='#fff';g.stroke()};
     for(let f=1;f<=N;f++){
+      say('Creando GIF… '+Math.round(f/N*100)+'%'+note);await tick();
       g.drawImage(base,0,0);
       const n=Math.max(2,Math.round(P.length*f/N));
       g.lineJoin=g.lineCap='round';g.lineWidth=5;g.strokeStyle='#d6246e';
       g.beginPath();P.slice(0,n).forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));g.stroke();
-      const dp=(p,col)=>{g.beginPath();g.arc(p[0],p[1],8,0,7);g.fillStyle=col;g.fill();g.lineWidth=3;g.strokeStyle='#fff';g.stroke()};
       dp(P[0],'#1f9d55');dp(P[n-1],f===N?'#d6246e':'#12263a');
-      gif.addFrame(g.getImageData(0,0,W,H),{delay:f===N?1800:90});
+      frames.push(quant(g.getImageData(0,0,W,H).data,pal,cache));
+      delays.push(f===N?180:9);
     }
-    say('Generando GIF…');
-    gif.on('finished',b=>{
-      const u=URL.createObjectURL(b);
-      $('out').innerHTML='<img src="'+u+'" alt="Ruta animada"><br><a download="ruta.gif" href="'+u+'"><button type="button" style="margin-top:8px">Descargar GIF</button></a>';
-      say('GIF listo.');$('gif').disabled=false;
-    });
-    gif.render();
-  }catch(e){say('No se pudo crear el GIF: '+(e.message||'error'));$('gif').disabled=false}
+    const bytes=encodeGif(frames,pal.flat(),delays,W,H);
+    const u=URL.createObjectURL(new Blob([bytes],{type:'image/gif'}));
+    $('out').innerHTML='<img src="'+u+'" alt="Ruta animada"><br><a download="ruta.gif" href="'+u+'"><button type="button" style="margin-top:8px">Descargar GIF</button></a><div id="msg">Si no se descarga, mantén presionada la imagen para guardarla.</div>';
+    say('GIF listo.'+note);
+  }catch(e){say('No se pudo crear el GIF: '+(e.message||'error'))}
+  $('gif').disabled=false;
 };
 </script>
 </body>
