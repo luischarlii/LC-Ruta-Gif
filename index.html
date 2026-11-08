@@ -24,6 +24,9 @@ select,button{font:inherit;color:inherit;padding:8px;border:1px solid var(--line
 #go{background:var(--ink)!important;color:var(--paper)!important}
 #gif{background:var(--route)!important;color:#fff!important}
 button:disabled{opacity:.5}
+#infowrap{position:relative}
+#hint{position:absolute;left:50%;bottom:calc(10px + env(safe-area-inset-bottom,0));transform:translateX(-50%);display:none;z-index:5;background:var(--route);color:#fff;font-size:13px;font-weight:700;padding:5px 14px;border-radius:999px;box-shadow:0 2px 6px #0005;cursor:pointer;white-space:nowrap;animation:flash 1s ease-in-out infinite}
+@keyframes flash{0%,100%{opacity:1;transform:translateX(-50%) translateY(0)}50%{opacity:.3;transform:translateX(-50%) translateY(-5px)}}
 #info{max-height:30vh;overflow:auto;padding:8px 10px;background:var(--card);border-top:1px solid var(--line);padding-bottom:calc(8px + env(safe-area-inset-bottom,0))}
 #msg{font-size:14px;opacity:.85}
 #sum{font-weight:700;margin:4px 0}
@@ -50,7 +53,9 @@ li{padding:3px 0}
     <button id="gif" disabled>Crear GIF</button>
   </div>
 </div>
+<div id="infowrap"><div id="hint" role="button"></div>
 <div id="info"><div id="msg">Elige estado, pulsa Desde o Hasta y toca el mapa para fijar cada punto.</div><div id="sum"></div><ol id="steps"></ol><div id="out"></div></div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
@@ -244,7 +249,7 @@ $('gif').onclick=async()=>{
       const c=document.createElement('canvas');c.width=W;c.height=TH;const x=c.getContext('2d');x.imageSmoothingQuality='high';
       x.fillStyle='#e8e8e0';x.fillRect(0,0,W,H);
       if(t)tiles.forEach(e=>e.i&&x.drawImage(e.i,e.x*T-ox,e.y*T-oy));
-      if(logo){x.save();x.globalAlpha=.22;x.drawImage(logo,(W-H)/2,0,H,H);x.restore()}
+      if(logo){x.save();x.globalAlpha=.07;x.drawImage(logo,(W-H)/2,0,H,H);x.restore()}
       x.fillStyle='rgba(255,255,255,.8)';x.fillRect(W-130,H-18,130,18);
       x.fillStyle='#333';x.font='11px sans-serif';x.fillText('© OpenStreetMap',W-124,H-5);
       x.fillStyle='#12263a';x.fillRect(0,H,W,FH);
@@ -291,6 +296,16 @@ $('gif').onclick=async()=>{
   }catch(e){say('No se pudo crear el GIF: '+(e.message||'error'))}
   $('gif').disabled=false;
 };
+function updHint(){
+  const i=$('info'),h=$('hint');
+  h.style.display=(i.scrollHeight-i.scrollTop-i.clientHeight>12)?'block':'none';
+  h.textContent=$('out').children.length?'▲ Imagen creada abajo':'▲ Más abajo';
+}
+$('hint').onclick=()=>$('info').scrollTo({top:$('info').scrollHeight,behavior:'smooth'});
+$('info').addEventListener('scroll',updHint);
+$('info').addEventListener('load',updHint,true);
+addEventListener('resize',updHint);
+new MutationObserver(updHint).observe($('info'),{childList:true,subtree:true,characterData:true});
 $('logo').src=LOGO;
 ['icon','apple-touch-icon'].forEach(r=>{const l=document.createElement('link');l.rel=r;l.href=LOGO;document.head.appendChild(l)});
 </script>
