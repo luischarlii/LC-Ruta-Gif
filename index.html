@@ -11,36 +11,44 @@
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
 body{font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--paper);color:var(--ink);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0)}
-#panel{padding:10px;display:grid;gap:8px;background:var(--card);border-bottom:1px solid var(--line)}
-.row{display:flex;gap:8px}
-input,select,button{font:inherit;color:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);min-width:0}
-input{flex:1}
-button{background:var(--route);color:#fff;border:0;font-weight:600;cursor:pointer}
-button.sec{background:var(--ink);color:var(--paper)}
+#bar{display:flex;gap:6px;padding:6px;background:var(--card);border-bottom:1px solid var(--line)}
+select,button{font:inherit;color:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);min-width:0}
+#bar select{flex:1}
+#wrap{position:relative;flex:1;min-height:0}
+#map{position:absolute;inset:0}
+#side{position:absolute;right:8px;top:8px;z-index:1000;display:flex;flex-direction:column;gap:6px;width:82px}
+#side button{width:100%;font-size:14px;font-weight:600;padding:9px 4px;background:var(--card);box-shadow:0 1px 4px #0004;cursor:pointer}
+#bO.on{background:var(--go);color:#fff;border-color:var(--go)}
+#bD.on{background:var(--route);color:#fff;border-color:var(--route)}
+#go{background:var(--ink)!important;color:var(--paper)!important}
+#gif{background:var(--route)!important;color:#fff!important}
 button:disabled{opacity:.5}
-#map{flex:1;min-height:240px}
-#info{max-height:34vh;overflow:auto;padding:10px;background:var(--card);border-top:1px solid var(--line);padding-bottom:calc(10px + env(safe-area-inset-bottom,0))}
-#sum{font-weight:700;margin-bottom:6px}
+#info{max-height:30vh;overflow:auto;padding:8px 10px;background:var(--card);border-top:1px solid var(--line);padding-bottom:calc(8px + env(safe-area-inset-bottom,0))}
+#msg{font-size:14px;opacity:.85}
+#sum{font-weight:700;margin:4px 0}
 ol{margin:0;padding-left:22px}
 li{padding:3px 0}
-#msg{font-size:14px;opacity:.8}
 #out img{max-width:100%;border-radius:8px;margin-top:8px}
+#out button{margin-top:8px;background:var(--route);color:#fff;border:0;font-weight:600}
 </style>
 </head>
-
-
 <body>
-<div id="panel">
-  <div class="row"><select id="pais"><option value="mx">México</option><option value="us">Estados Unidos</option><option value="ca">Canadá</option></select><select id="edo" style="flex:1"></select></div>
-  <div class="row"><input id="ciudad" list="sug" placeholder="Ciudad: escribe y elige (abre el mapa ahí)"><datalist id="sug"></datalist></div>
-  <div class="row"><input id="orig" placeholder="Desde: escribe, toca el mapa o usa GPS"><button id="loc" class="sec" title="Usar mi ubicación">📍</button></div>
-  <div class="row"><input id="dest" placeholder="Hasta: busca un lugar o dirección"><select id="mode"><option value="car">Auto</option><option value="foot">A pie</option><option value="bike">Bici</option></select></div>
-  <div class="row"><select id="tap" style="flex:1"><option value="o">Al tocar el mapa fijo: origen</option><option value="d" selected>Al tocar el mapa fijo: destino</option></select></div>
-  <div class="row"><button id="go" style="flex:1">Calcular ruta</button><button id="gif" class="sec" style="flex:1" disabled>Crear GIF</button></div>
-  <div id="msg"></div>
+<div id="bar">
+  <select id="pais"><option value="mx">México</option><option value="us">Estados Unidos</option><option value="ca">Canadá</option></select>
+  <select id="edo"></select>
+  <select id="mode"><option value="car">Auto</option><option value="foot">A pie</option><option value="bike">Bici</option></select>
 </div>
-<div id="map"></div>
-<div id="info"><div id="sum">Toca el mapa para fijar origen y destino, o escribe un lugar.</div><ol id="steps"></ol><div id="out"></div></div>
+<div id="wrap">
+  <div id="map"></div>
+  <div id="side">
+    <button id="loc" title="Usar mi ubicación">📍 GPS</button>
+    <button id="bO" class="on">Desde</button>
+    <button id="bD">Hasta</button>
+    <button id="go">Ruta</button>
+    <button id="gif" disabled>Crear GIF</button>
+  </div>
+</div>
+<div id="info"><div id="msg">Elige estado, pulsa Desde o Hasta y toca el mapa para fijar cada punto.</div><div id="sum"></div><ol id="steps"></ol><div id="out"></div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
@@ -54,17 +62,10 @@ const SVC={car:'https://router.project-osrm.org/route/v1/driving/',
  foot:'https://routing.openstreetmap.de/routed-foot/route/v1/foot/',
  bike:'https://routing.openstreetmap.de/routed-bike/route/v1/bike/'};
 
-async function geocode(q){
-  const b=map.getBounds(),vb=[b.getWest(),b.getNorth(),b.getEast(),b.getSouth()].join(',');
-  const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&viewbox='+vb+'&q='+encodeURIComponent(q));
-  const j=await r.json();
-  if(!j.length) throw new Error('No encontré "'+q+'".');
-  return {lat:+j[0].lat,lon:+j[0].lon,name:j[0].display_name};
-}
 function gps(){
   return new Promise((ok,no)=>navigator.geolocation
-    ? navigator.geolocation.getCurrentPosition(p=>ok({lat:p.coords.latitude,lon:p.coords.longitude}),()=>no(new Error('No pude obtener tu ubicación. Permite la ubicación en el navegador (necesita https o abrirlo en un navegador) o toca el mapa para fijar el origen.')),{enableHighAccuracy:true,timeout:15000})
-    : no(new Error('Este navegador no tiene GPS. Escribe un origen.')));
+    ? navigator.geolocation.getCurrentPosition(p=>ok({lat:p.coords.latitude,lon:p.coords.longitude}),()=>no(new Error('No pude obtener tu ubicación. Permite la ubicación (necesita https) o pulsa Desde y toca el mapa.')),{enableHighAccuracy:true,timeout:15000})
+    : no(new Error('Este navegador no tiene GPS. Pulsa Desde y toca el mapa.')));
 }
 const MOD={left:'a la izquierda',right:'a la derecha','slight left':'ligeramente a la izquierda','slight right':'ligeramente a la derecha','sharp left':'cerrado a la izquierda','sharp right':'cerrado a la derecha',straight:'recto',uturn:'en U'};
 function fmt(m){return m>=1000?(m/1000).toFixed(1)+' km':Math.round(m)+' m'}
@@ -75,41 +76,60 @@ function text(s){
   return v+(m?' '+m:'')+n+' ('+fmt(s.distance)+')';
 }
 
-let O=null,D=null;const pins=L.layerGroup().addTo(map),mk={};
+/* ---- Fijar Desde / Hasta ---- */
+let O=null,D=null,tap='o';const pins=L.layerGroup().addTo(map),mk={};
 const icon=c=>L.divIcon({className:'',html:'<div style="width:18px;height:18px;border-radius:50%;background:'+c+';border:3px solid #fff;box-shadow:0 0 4px #0008"></div>',iconSize:[18,18],iconAnchor:[9,9]});
-function place(k,p,label){
+function setTap(k){tap=k;$('bO').classList.toggle('on',k==='o');$('bD').classList.toggle('on',k==='d')}
+function place(k,p){
   if(k==='o')O=p;else D=p;
   if(mk[k])mk[k].setLatLng([p.lat,p.lon]);
   else{mk[k]=L.marker([p.lat,p.lon],{icon:icon(k==='o'?'#1f9d55':'#d6246e'),draggable:true}).addTo(pins);
     mk[k].on('dragend',()=>{const q=mk[k].getLatLng();pick(k,q.lat,q.lng)})}
-  $(k==='o'?'orig':'dest').value=label||(p.lat.toFixed(5)+', '+p.lon.toFixed(5));
+  $('bO').textContent='Desde'+(O?' ✓':'');$('bD').textContent='Hasta'+(D?' ✓':'');
 }
+const desc=()=>'Desde: '+(O?(O.name||'punto fijado'):'—')+'  →  Hasta: '+(D?(D.name||'punto fijado'):'—');
 function pick(k,lat,lon){
-  const p={lat,lon};place(k,p);
+  const p={lat,lon};place(k,p);say(desc());
   fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat='+lat+'&lon='+lon).then(r=>r.json()).then(j=>{
-    if(j.display_name&&(k==='o'?O:D)===p)$(k==='o'?'orig':'dest').value=j.display_name}).catch(()=>{});
-  if(k==='o')$('tap').value='d';
-  if(O&&D)calc();else say(k==='o'?'Origen fijado. Toca el destino.':'Destino fijado. Falta el origen: toca el mapa o usa 📍.');
+    if(j.display_name){p.name=j.display_name.split(',').slice(0,2).join(',');if((k==='o'?O:D)===p)say(desc())}}).catch(()=>{});
+  if(k==='o')setTap('d');
+  if(O&&D)calc();
 }
-map.on('click',e=>pick($('tap').value,e.latlng.lat,e.latlng.lng));
-$('orig').oninput=()=>{O=null};$('dest').oninput=()=>{D=null};
+map.on('click',e=>pick(tap,e.latlng.lat,e.latlng.lng));
+$('bO').onclick=()=>setTap('o');
+$('bD').onclick=()=>setTap('d');
+$('mode').onchange=()=>{if(O&&D)calc()};
 $('loc').onclick=async()=>{
-  try{say('Pidiendo tu ubicación…');const p=await gps();place('o',p,'Mi ubicación');map.setView([p.lat,p.lon],15);$('tap').value='d';
-    say('Origen fijado. Toca el mapa o escribe el destino.');if(D)calc()}
+  try{say('Pidiendo tu ubicación…');const q=await gps();place('o',{lat:q.lat,lon:q.lon,name:'Mi ubicación'});
+    map.setView([q.lat,q.lon],15);setTap('d');say(desc());if(D)calc()}
   catch(e){say(e.message)}
 };
 $('go').onclick=calc;
-async function locate(k){
-  const t=$(k==='o'?'orig':'dest').value.trim();if(!t)return;
-  try{say('Buscando…');const p=await geocode(t);place(k,p,t);map.setView([p.lat,p.lon],15);
-    if(k==='o')$('tap').value='d';
-    if(O&&D)calc();else say('Lugar fijado en el mapa.')}
-  catch(e){say(e.message)}
-}
-$('orig').onkeydown=e=>{if(e.key==='Enter')locate('o')};
-$('dest').onkeydown=e=>{if(e.key==='Enter')locate('d')};
 
-/* ---- País / estado / ciudad ---- */
+async function calc(){
+  try{
+    $('go').disabled=true;$('gif').disabled=true;$('out').innerHTML='';
+    if(!D) throw new Error('Pulsa Hasta y toca el mapa para fijar el destino.');
+    say('Calculando ruta…');
+    let o=O;if(!o){const q=await gps();o={lat:q.lat,lon:q.lon,name:'Mi ubicación'};place('o',o)}
+    const d=D;
+    const url=SVC[$('mode').value]+o.lon+','+o.lat+';'+d.lon+','+d.lat+'?overview=full&geometries=geojson&steps=true';
+    const j=await (await fetch(url)).json();
+    if(!j.routes||!j.routes.length) throw new Error('No hay ruta entre esos puntos.');
+    const r=j.routes[0];
+    route={pts:r.geometry.coordinates.map(c=>[c[1],c[0]]),o,d};
+    layer.clearLayers();
+    const line=L.polyline(route.pts,{color:'#d6246e',weight:5}).addTo(layer);
+    map.fitBounds(line.getBounds(),{paddingTopLeft:[30,30],paddingBottomRight:[100,30]});
+    $('sum').textContent=fmt(r.distance)+' · '+Math.max(1,Math.round(r.duration/60))+' min';
+    $('steps').innerHTML='';
+    r.legs.forEach(l=>l.steps.forEach(s=>{const li=document.createElement('li');li.textContent=text(s);$('steps').appendChild(li)}));
+    say(desc());$('gif').disabled=false;
+  }catch(e){say(e.message||'Error de conexión.')}
+  $('go').disabled=false;
+}
+
+/* ---- País / estado ---- */
 const EST={
 mx:['Aguascalientes','Baja California','Baja California Sur','Campeche','Chiapas','Chihuahua','Ciudad de México','Coahuila','Colima','Durango','Guanajuato','Guerrero','Hidalgo','Jalisco','Estado de México','Michoacán','Morelos','Nayarit','Nuevo León','Oaxaca','Puebla','Querétaro','Quintana Roo','San Luis Potosí','Sinaloa','Sonora','Tabasco','Tamaulipas','Tlaxcala','Veracruz','Yucatán','Zacatecas'],
 us:['Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut','Delaware','District of Columbia','Florida','Georgia','Hawaii','Idaho','Illinois','Indiana','Iowa','Kansas','Kentucky','Louisiana','Maine','Maryland','Massachusetts','Michigan','Minnesota','Mississippi','Missouri','Montana','Nebraska','Nevada','New Hampshire','New Jersey','New Mexico','New York','North Carolina','North Dakota','Ohio','Oklahoma','Oregon','Pennsylvania','Rhode Island','South Carolina','South Dakota','Tennessee','Texas','Utah','Vermont','Virginia','Washington','West Virginia','Wisconsin','Wyoming'],
@@ -122,51 +142,13 @@ async function fly(q,maxZ){
     if(!j.length) throw new Error('No encontré "'+q+'".');
     const b=j[0].boundingbox.map(Number);
     map.fitBounds([[b[0],b[2]],[b[1],b[3]]],{maxZoom:maxZ,padding:[20,20]});
-    say('Mapa listo. Fija origen y destino.');
+    say('Mapa listo. Pulsa Desde o Hasta y toca el mapa.');
   }catch(e){say(e.message||'Error de conexión.')}
 }
-function fillEdo(){
-  $('edo').innerHTML='<option value="">Estado / provincia</option>'+EST[$('pais').value].map(e=>'<option>'+e+'</option>').join('');
-  $('ciudad').value='';$('sug').innerHTML='';
-}
+function fillEdo(){$('edo').innerHTML='<option value="">Estado / provincia</option>'+EST[$('pais').value].map(e=>'<option>'+e+'</option>').join('')}
 $('pais').onchange=()=>{fillEdo();fly(PN[$('pais').value],5)};
-$('edo').onchange=()=>{$('ciudad').value='';$('sug').innerHTML='';if($('edo').value)fly($('edo').value+', '+PN[$('pais').value],9)};
-$('ciudad').onchange=()=>{const c=$('ciudad').value.trim();if(c)fly(c+', '+$('edo').value+', '+PN[$('pais').value],14)};
-let tm;
-$('ciudad').oninput=()=>{
-  clearTimeout(tm);const v=$('ciudad').value.trim();if(v.length<3)return;
-  tm=setTimeout(async()=>{
-    try{
-      const q=v+($('edo').value?', '+$('edo').value:'');
-      const j=await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=6&countrycodes='+$('pais').value+'&q='+encodeURIComponent(q))).json();
-      $('sug').innerHTML=[...new Set(j.map(x=>x.display_name.split(',')[0]))].map(n=>'<option value="'+n.replace(/[&<>"]/g,'')+'">').join('');
-    }catch(e){}
-  },600);
-};
+$('edo').onchange=()=>{if($('edo').value)fly($('edo').value+', '+PN[$('pais').value],10)};
 fillEdo();
-async function calc(){
-  try{
-    $('go').disabled=true;$('gif').disabled=true;$('out').innerHTML='';
-    if(!D&&!$('dest').value.trim()) throw new Error('Fija un destino: escríbelo o toca el mapa.');
-    say('Buscando lugares…');
-    let o=O;if(!o){const t=$('orig').value.trim();o=t?await geocode(t):await gps();place('o',o,t||'Mi ubicación')}
-    let d=D;if(!d){const t=$('dest').value.trim();d=await geocode(t);place('d',d,t)}
-    say('Calculando ruta…');
-    const url=SVC[$('mode').value]+o.lon+','+o.lat+';'+d.lon+','+d.lat+'?overview=full&geometries=geojson&steps=true';
-    const j=await (await fetch(url)).json();
-    if(!j.routes||!j.routes.length) throw new Error('No hay ruta entre esos puntos.');
-    const r=j.routes[0];
-    route={pts:r.geometry.coordinates.map(c=>[c[1],c[0]]),o,d};
-    layer.clearLayers();
-    const line=L.polyline(route.pts,{color:'#d6246e',weight:5}).addTo(layer);
-    map.fitBounds(line.getBounds(),{padding:[30,30]});
-    $('sum').textContent=fmt(r.distance)+' · '+Math.max(1,Math.round(r.duration/60))+' min';
-    $('steps').innerHTML='';
-    r.legs.forEach(l=>l.steps.forEach(s=>{const li=document.createElement('li');li.textContent=text(s);$('steps').appendChild(li)}));
-    say('Ruta lista.');$('gif').disabled=false;
-  }catch(e){say(e.message||'Error de conexión.')}
-  $('go').disabled=false;
-};
 
 /* ---- GIF (codificador propio, sin librerías ni workers) ---- */
 const W=480,H=360,T=256;
@@ -282,6 +264,5 @@ $('gif').onclick=async()=>{
   $('gif').disabled=false;
 };
 </script>
-
 </body>
 </html>
